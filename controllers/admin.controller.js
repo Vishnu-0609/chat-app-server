@@ -15,7 +15,7 @@ const adminLogin = async (req,res,next) => {
         const isMatch = secretKey === adminSecretKey;
 
         if(!isMatch)
-            return next(new ErrorHandler("Invalid Admin Secret Key",401));
+            return next(new ErrorHandler("Invalid Admin Key",401));
 
         const token = jwt.sign(secretKey,process.env.JWT_SECRET);
 
@@ -63,6 +63,7 @@ const getAllUsers = async (req,res,next) => {
         const allUsers = await User.find().select("-password");
 
         const tranformedUserData =  await Promise.all(allUsers.map(async({_id,avatar,name,bio,username})=>({
+            _id,
             name,
             username,
             avatar:avatar.url,

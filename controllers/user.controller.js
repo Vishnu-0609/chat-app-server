@@ -86,7 +86,7 @@ const login = async (req,res,next) => {
     }
 }
 
-const getMyProfile = async (req,res,netx) => {
+const getMyProfile = async (req,res,next) => {
     try
     {
         if(!req.user)
@@ -95,7 +95,7 @@ const getMyProfile = async (req,res,netx) => {
         }
         const {_id} = req.user;
     
-        const user = await User.findById({_id}).select("-createdAt -updatedAt -__v");
+        const user = await User.findById({_id}).select("-updatedAt -__v");
     
         if(!user)
         {

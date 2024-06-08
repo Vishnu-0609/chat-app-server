@@ -1,22 +1,21 @@
-import express from "express";
-import { configDotenv } from "dotenv";
-import cors from "cors";
+import { v2 as cloudinary } from 'cloudinary';
 import cookieParser from "cookie-parser";
-import UserRouter from "./routes/user.routes.js";
-import { connectDB } from "./DB/index.js";
-import { errorMiddleware } from "./middlewares/error.middleware.js";
-import ChatRouter from "./routes/chat.routes.js";
-import { createUser } from "./seeders/user.js";
-import { createGroupChats, createSingleChats,createMessagesInAChat } from "./seeders/chat.js";
-import AdminRouter from "./routes/admin.routes.js";
-import { Server } from "socket.io";
+import cors from "cors";
+import { configDotenv } from "dotenv";
+import express from "express";
 import { createServer } from "http";
-import { NEW_MESSAGE, NEW_MESSAGE_ALERT } from "./constants/events.js";
+import { Server } from "socket.io";
 import { v4 as uuid } from "uuid";
+import { connectDB } from "./DB/index.js";
+import { CHAT_JOINED, CHAT_LEAVED, NEW_MESSAGE, NEW_MESSAGE_ALERT, ONLINE_USERS, START_TYPING, STOP_TYPING } from "./constants/events.js";
 import { getSockets } from "./constants/socket.js";
+import { socketAuthenticator } from "./middlewares/auth.middleware.js";
+import { errorMiddleware } from "./middlewares/error.middleware.js";
 import { Message } from "./models/message.model.js";
+import AdminRouter from "./routes/admin.routes.js";
+import ChatRouter from "./routes/chat.routes.js";
+import UserRouter from "./routes/user.routes.js";
 import { ErrorHandler } from "./utils/ErrorHandler.js";
-import {v2 as cloudinary} from 'cloudinary';
 
 configDotenv({
     path:"./.env",
@@ -29,13 +28,24 @@ cloudinary.config({
 });
 
 const usersSocketIds = new Map();
+const onlineUsers = new Set();
 
 const app = express();
 const server = createServer(app);
-const io = new Server(server,{});
+
+const io = new Server(server,{
+    cors:{
+        origin:["http://localhost:5173","http://localhost:4173",process.env.FRONTENED_URL],
+        methods:["GET","POST","PUT","DELETE"],
+        credentials:true
+    }
+});
+
+app.set("io",io)
 
 app.use(cors({
     origin:["http://localhost:5173","http://localhost:4173",process.env.FRONTENED_URL],
+    methods:["GET","POST","PUT","DELETE"],
     credentials:true
 }));
 app.use(cookieParser());
@@ -52,19 +62,14 @@ app.get("/",(req,res)=>{
 })
 
 io.use((socket,next)=>{
-
+    cookieParser()(socket.request,socket.request.res,async(err)=>{
+        await socketAuthenticator(err,socket,next);
+    })
 });
 
 io.on("connection",(socket)=>{
 
-    // one way to access user token that sent from frontened during connection
-    // socket.handshake.query.usertoken;
-    console.log("user connected "+socket.id);
-
-    const user = {
-        _id:"6651e54ab90149a49c8af6d7",
-        name:"Vishnu"
-    };
+    const user = socket?.user;
 
     usersSocketIds.set(user._id.toString(),socket.id);
 
@@ -82,8 +87,6 @@ io.on("connection",(socket)=>{
         }
 
         const membersSocket = getSockets(members);
-
-        // console.log(membersSocket);
 
         io.to(membersSocket).emit(NEW_MESSAGE,{
             chatId,
@@ -108,9 +111,34 @@ io.on("connection",(socket)=>{
         }
     })
 
+    socket.on(START_TYPING,async({chatId,members})=>{
+        const membersSockets = getSockets(members);
+        socket.to(membersSockets).emit(START_TYPING,{chatId})
+    })
+
+    socket.on(STOP_TYPING,async({chatId,members})=>{
+        const membersSockets = getSockets(members);
+        socket.to(membersSockets).emit(STOP_TYPING,{chatId})
+    })
+
+    socket.on(CHAT_JOINED,async({userId,members})=>{
+        onlineUsers.add(userId.toString());
+
+        const membersSocket = getSockets(members);
+        io.to(membersSocket).emit(ONLINE_USERS,Array.from(onlineUsers));
+    })
+
+    socket.on(CHAT_LEAVED,async({userId,members})=>{
+        onlineUsers.delete(userId.toString());
+        
+        const membersSocket = getSockets(members);
+        io.to(membersSocket).emit(ONLINE_USERS,Array.from(onlineUsers));
+    })
+
     socket.on("disconnect",()=>{
-        console.log(socket.id+" Disconnected");
+        onlineUsers.delete(user._id.toString());
         usersSocketIds.delete(user._id.toString());
+        socket.broadcast.emit(ONLINE_USERS,Array.from(onlineUsers))
     })
 })
 
@@ -132,4 +160,4 @@ connectDB()
 
 export {
     usersSocketIds
-}
+};
